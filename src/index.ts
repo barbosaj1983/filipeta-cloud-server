@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json());
 
 // health simples — não tocar no DB aqui
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/admin/health-inline', (_req, res) => res.json({ ok: true, hint: 'inline' }));
 
 // rotas por loja
 app.use('/api/products', requireStoreApiKey, products);
