@@ -1,9 +1,14 @@
-
+--- file: ./src/routes/middleware.ts ---
 import { Request, Response, NextFunction } from 'express';
-import { ENV } from '../utils/env.js';
+import { prisma } from '../db/client.js';
 
-export function requireApiKey(req: Request, res: Response, next: NextFunction) {
+export async function requireStoreApiKey(req: Request, res: Response, next: NextFunction) {
   const key = req.header('x-api-key');
-  if (key !== ENV.API_KEY) return res.status(401).json({ error: 'unauthorized' });
+  if (!key) return res.status(401).json({ error: 'missing_store_key' });
+
+  const api = await prisma.apiKey.findUnique({ where: { key } });
+  if (!api) return res.status(401).json({ error: 'invalid_store_key' });
+
+  (req as any).storeId = api.store_id;
   next();
 }

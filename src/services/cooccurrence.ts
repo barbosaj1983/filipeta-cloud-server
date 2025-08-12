@@ -1,25 +1,35 @@
-import { prisma } from '../db/client';
+--- file: ./src/services/cooccurrence.ts ---
+import { prisma } from '../db/client.js';
 
+/** Recalcula coocorrência para UMA loja */
 export async function recomputeCooccurrenceForStore(storeId: string) {
   // limpa coocorrência da loja
-  await prisma.$executeRawUnsafe(`DELETE FROM "Cooccurrence" WHERE store_id = $1`, storeId);
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM "Cooccurrence" WHERE store_id = $1`,
+    storeId
+  );
 
-  // supports por produto (só transações da loja)
-  const supports = await prisma.$queryRawUnsafe<{ gtin: string; support: number }[]>(`
+  // supports por produto (na loja)
+  const supports = await prisma.$queryRawUnsafe<{ gtin: string; support: number }[]>(
+    `
     SELECT ti.gtin, COUNT(*)::int AS support
     FROM "Transaction" t
     JOIN "TransactionItem" ti ON ti.transaction_id = t.id
     WHERE t.store_id = $1
     GROUP BY ti.gtin
-  `, storeId);
+  `,
+    storeId
+  );
 
   const supportMap = new Map(supports.map(r => [r.gtin, r.support]));
   const totalTx = await prisma.$queryRawUnsafe<{ n: number }[]>(
-    `SELECT COUNT(*)::int AS n FROM "Transaction" WHERE store_id = $1`, storeId
+    `SELECT COUNT(*)::int AS n FROM "Transaction" WHERE store_id = $1`,
+    storeId
   ).then(r => r[0]?.n ?? 1);
 
-  // pares (a,b) na mesma transação (ajuste seu SQL se já existir)
-  const pairs = await prisma.$queryRawUnsafe<{ a: string; b: string; support_ab: number }[]>(`
+  // pares (a,b) na mesma transação
+  const pairs = await prisma.$queryRawUnsafe<{ a: string; b: string; support_ab: number }[]>(
+    `
     SELECT LEAST(ti1.gtin, ti2.gtin) AS a,
            GREATEST(ti1.gtin, ti2.gtin) AS b,
            COUNT(*)::int AS support_ab
@@ -29,17 +39,37 @@ export async function recomputeCooccurrenceForStore(storeId: string) {
     WHERE t.store_id = $1
     GROUP BY 1,2
     HAVING COUNT(*) > 0
-  `, storeId);
+  `,
+    storeId
+  );
 
   const rows = pairs.map(({ a, b, support_ab }) => {
     const support_a = supportMap.get(a) ?? 0;
     const support_b = supportMap.get(b) ?? 0;
     const confidence = support_ab / Math.max(1, support_a);
     const lift = confidence / Math.max(1e-9, support_b / totalTx);
-    return { store_id: storeId, gtin_a: a, gtin_b: b, support_ab, support_a, support_b, confidence, lift };
+    return {
+      store_id: storeId,
+      gtin_a: a,
+      gtin_b: b,
+      support_ab,
+      support_a,
+      support_b,
+      confidence,
+      lift,
+      // updated_at = default(now())
+    };
   });
 
   if (rows.length) {
     await prisma.cooccurrence.createMany({ data: rows, skipDuplicates: true });
+  }
+}
+
+/** Recalcula coocorrência para TODAS as lojas */
+export async function recomputeCooccurrence() {
+  const stores = await prisma.store.findMany({ select: { id: true } });
+  for (const st of stores) {
+    await recomputeCooccurrenceForStore(st.id);
   }
 }
