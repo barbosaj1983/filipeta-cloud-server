@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Store {
+  id           String   @id @default(cuid())
+  code         String   @unique   // ex.: L01, L02
+  name         String
+  created_at   DateTime @default(now())
+  apiKeys      ApiKey[]
+  transactions Transaction[]
+}
+
+model ApiKey {
+  id         String   @id @default(cuid())
+  key        String   @unique
+  store_id   String
+  store      Store    @relation(fields: [store_id], references: [id])
+  created_at DateTime @default(now())
+}
+
+model Product {
+  gtin       String  @id
+  name       String
+  brand      String?
+  category   String?
+  price      Float?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  items      TransactionItem[]
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  cpf          String   @unique
+  created_at   DateTime @default(now())
+  transactions Transaction[]
+}
+
+model Transaction {
+  id           String   @id @default(cuid())
+  store_id     String
+  store        Store    @relation(fields: [store_id], references: [id])
+  customer_id  String?
+  customer     Customer? @relation(fields: [customer_id], references: [id])
+  ts           DateTime @default(now())
+  items        TransactionItem[]
+}
+
+model TransactionItem {
+  id             String   @id @default(cuid())
+  transaction_id String
+  transaction    Transaction @relation(fields: [transaction_id], references: [id])
+  gtin           String
+  product        Product @relation(fields: [gtin], references: [gtin])
+  qty            Int
+  price          Float
+}
+
+model Cooccurrence {
+  id          String   @id @default(cuid())
+  store_id    String
+  gtin_a      String
+  gtin_b      String
+  support_ab  Int
+  support_a   Int
+  support_b   Int
+  confidence  Float
+  lift        Float
+  updated_at  DateTime @default(now())
+
+  @@index([store_id, gtin_a, gtin_b])
+}
