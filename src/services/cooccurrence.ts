@@ -1,47 +1,45 @@
+import { prisma } from '../db/client';
 
-import { prisma } from '../db/client.js';
+export async function recomputeCooccurrenceForStore(storeId: string) {
+  // limpa coocorrência da loja
+  await prisma.$executeRawUnsafe(`DELETE FROM "Cooccurrence" WHERE store_id = $1`, storeId);
 
-export async function recomputeCooccurrence() {
-  await prisma.$executeRawUnsafe(`TRUNCATE TABLE "Cooccurrence";`);
-
+  // supports por produto (só transações da loja)
   const supports = await prisma.$queryRawUnsafe<{ gtin: string; support: number }[]>(`
-    SELECT ti.gtin, COUNT(*) AS support
-    FROM "TransactionItem" ti
+    SELECT ti.gtin, COUNT(*)::int AS support
+    FROM "Transaction" t
+    JOIN "TransactionItem" ti ON ti.transaction_id = t.id
+    WHERE t.store_id = $1
     GROUP BY ti.gtin
-  `);
-  const supportMap = new Map(supports.map(s => [s.gtin, Number(s.support)]));
+  `, storeId);
 
-  const pairs = await prisma.$queryRawUnsafe<{ gtin_a: string; gtin_b: string; support_ab: number }[]>(`
-    SELECT a.gtin AS gtin_a, b.gtin AS gtin_b, COUNT(*) AS support_ab
-    FROM "TransactionItem" a
-    JOIN "TransactionItem" b ON a.transaction_id = b.transaction_id AND a.gtin < b.gtin
-    GROUP BY a.gtin, b.gtin
-    HAVING COUNT(*) >= 2
-  `);
+  const supportMap = new Map(supports.map(r => [r.gtin, r.support]));
+  const totalTx = await prisma.$queryRawUnsafe<{ n: number }[]>(
+    `SELECT COUNT(*)::int AS n FROM "Transaction" WHERE store_id = $1`, storeId
+  ).then(r => r[0]?.n ?? 1);
 
-  const totalA = Array.from(supportMap.values()).reduce((acc, v) => acc + v, 0) || 1;
-  for (const p of pairs) {
-    const sa = supportMap.get(p.gtin_a) || 1;
-    const sb = supportMap.get(p.gtin_b) || 1;
-    const confidence = p.support_ab / sa;
-    const lift = confidence / (sb / totalA);
-    await prisma.cooccurrence.create({
-      data: {
-        gtin_a: p.gtin_a, gtin_b: p.gtin_b,
-        support_ab: Number(p.support_ab),
-        support_a: sa, support_b: sb,
-        confidence, lift
-      }
-    });
-    const confidenceBA = p.support_ab / sb;
-    const liftBA = confidenceBA / (sa / totalA);
-    await prisma.cooccurrence.create({
-      data: {
-        gtin_a: p.gtin_b, gtin_b: p.gtin_a,
-        support_ab: Number(p.support_ab),
-        support_a: sb, support_b: sa,
-        confidence: confidenceBA, lift: liftBA
-      }
-    });
+  // pares (a,b) na mesma transação (ajuste seu SQL se já existir)
+  const pairs = await prisma.$queryRawUnsafe<{ a: string; b: string; support_ab: number }[]>(`
+    SELECT LEAST(ti1.gtin, ti2.gtin) AS a,
+           GREATEST(ti1.gtin, ti2.gtin) AS b,
+           COUNT(*)::int AS support_ab
+    FROM "Transaction" t
+    JOIN "TransactionItem" ti1 ON ti1.transaction_id = t.id
+    JOIN "TransactionItem" ti2 ON ti2.transaction_id = t.id AND ti2.gtin > ti1.gtin
+    WHERE t.store_id = $1
+    GROUP BY 1,2
+    HAVING COUNT(*) > 0
+  `, storeId);
+
+  const rows = pairs.map(({ a, b, support_ab }) => {
+    const support_a = supportMap.get(a) ?? 0;
+    const support_b = supportMap.get(b) ?? 0;
+    const confidence = support_ab / Math.max(1, support_a);
+    const lift = confidence / Math.max(1e-9, support_b / totalTx);
+    return { store_id: storeId, gtin_a: a, gtin_b: b, support_ab, support_a, support_b, confidence, lift };
+  });
+
+  if (rows.length) {
+    await prisma.cooccurrence.createMany({ data: rows, skipDuplicates: true });
   }
 }
