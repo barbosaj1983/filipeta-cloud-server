@@ -1,4 +1,3 @@
---- file: ./src/routes/middleware.ts ---
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client.js';
 

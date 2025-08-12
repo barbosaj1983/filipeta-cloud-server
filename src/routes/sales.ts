@@ -1,4 +1,3 @@
---- file: ./src/routes/sales.ts ---
 import { Router } from 'express';
 import { prisma } from '../db/client.js';
 import crypto from 'node:crypto';
@@ -8,7 +7,6 @@ export const sales = Router();
 type SaleItem = { gtin: string; qty: number; price: number };
 type SaleBody = { cpf?: string; items: SaleItem[] };
 
-// POST /api/sales/commit
 sales.post('/commit', async (req, res) => {
   try {
     const storeId = (req as any).storeId as string | undefined;

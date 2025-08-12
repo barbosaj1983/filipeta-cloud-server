@@ -1,15 +1,12 @@
---- file: ./src/services/cooccurrence.ts ---
 import { prisma } from '../db/client.js';
 
 /** Recalcula coocorrência para UMA loja */
 export async function recomputeCooccurrenceForStore(storeId: string) {
-  // limpa coocorrência da loja
   await prisma.$executeRawUnsafe(
     `DELETE FROM "Cooccurrence" WHERE store_id = $1`,
     storeId
   );
 
-  // supports por produto (na loja)
   const supports = await prisma.$queryRawUnsafe<{ gtin: string; support: number }[]>(
     `
     SELECT ti.gtin, COUNT(*)::int AS support
@@ -27,7 +24,6 @@ export async function recomputeCooccurrenceForStore(storeId: string) {
     storeId
   ).then(r => r[0]?.n ?? 1);
 
-  // pares (a,b) na mesma transação
   const pairs = await prisma.$queryRawUnsafe<{ a: string; b: string; support_ab: number }[]>(
     `
     SELECT LEAST(ti1.gtin, ti2.gtin) AS a,
@@ -57,7 +53,6 @@ export async function recomputeCooccurrenceForStore(storeId: string) {
       support_b,
       confidence,
       lift,
-      // updated_at = default(now())
     };
   });
 

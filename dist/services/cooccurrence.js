@@ -1,8 +1,7 @@
-import { prisma } from '../db/client';
+import { prisma } from '../db/client.js';
+/** Recalcula coocorrência para UMA loja */
 export async function recomputeCooccurrenceForStore(storeId) {
-    // limpa coocorrência da loja
     await prisma.$executeRawUnsafe(`DELETE FROM "Cooccurrence" WHERE store_id = $1`, storeId);
-    // supports por produto (só transações da loja)
     const supports = await prisma.$queryRawUnsafe(`
     SELECT ti.gtin, COUNT(*)::int AS support
     FROM "Transaction" t
@@ -12,7 +11,6 @@ export async function recomputeCooccurrenceForStore(storeId) {
   `, storeId);
     const supportMap = new Map(supports.map(r => [r.gtin, r.support]));
     const totalTx = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int AS n FROM "Transaction" WHERE store_id = $1`, storeId).then(r => r[0]?.n ?? 1);
-    // pares (a,b) na mesma transação (ajuste seu SQL se já existir)
     const pairs = await prisma.$queryRawUnsafe(`
     SELECT LEAST(ti1.gtin, ti2.gtin) AS a,
            GREATEST(ti1.gtin, ti2.gtin) AS b,
@@ -29,9 +27,25 @@ export async function recomputeCooccurrenceForStore(storeId) {
         const support_b = supportMap.get(b) ?? 0;
         const confidence = support_ab / Math.max(1, support_a);
         const lift = confidence / Math.max(1e-9, support_b / totalTx);
-        return { store_id: storeId, gtin_a: a, gtin_b: b, support_ab, support_a, support_b, confidence, lift };
+        return {
+            store_id: storeId,
+            gtin_a: a,
+            gtin_b: b,
+            support_ab,
+            support_a,
+            support_b,
+            confidence,
+            lift,
+        };
     });
     if (rows.length) {
         await prisma.cooccurrence.createMany({ data: rows, skipDuplicates: true });
+    }
+}
+/** Recalcula coocorrência para TODAS as lojas */
+export async function recomputeCooccurrence() {
+    const stores = await prisma.store.findMany({ select: { id: true } });
+    for (const st of stores) {
+        await recomputeCooccurrenceForStore(st.id);
     }
 }
